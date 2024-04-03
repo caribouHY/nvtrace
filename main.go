@@ -11,6 +11,14 @@ import (
 	"time"
 )
 
+type IsakmpTrace struct {
+	Timestamp     *time.Time
+	IsSend        bool
+	LocalAddress  *net.IP
+	RemoteAddress *net.IP
+	Data          []byte
+}
+
 const (
 	NUMBER = iota
 	LOCAL
@@ -43,6 +51,8 @@ func main() {
 	state := NUMBER
 	var data []byte
 	data_len := 0
+	packet_arry := make([]IsakmpTrace, 0, 30)
+	var packet IsakmpTrace
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if len(line) == 0 {
@@ -54,15 +64,18 @@ func main() {
 			num, send, time, err := parseNumber(line)
 			if err == nil {
 				fmt.Printf("num = %d, send=%t, time=%s\n", num, send, time)
+				packet = IsakmpTrace{Timestamp: time, IsSend: send}
 				state++
 			}
 		case LOCAL:
 			ip := parseAddress(line, true)
 			fmt.Println(" local =", ip)
+			packet.LocalAddress = ip
 			state++
 		case REMOTE:
 			ip := parseAddress(line, false)
 			fmt.Println(" remote =", ip)
+			packet.RemoteAddress = ip
 			state++
 		case COOKIES:
 			res := isCookies(line)
@@ -96,10 +109,12 @@ func main() {
 			if data_len == len(data) {
 				fmt.Println(data)
 				state = NUMBER
+				packet.Data = data
+				packet_arry = append(packet_arry, packet)
 			}
 		}
 	}
-
+	fmt.Println(packet_arry)
 	fmt.Print("Press Enter to exit. >")
 	bufio.NewScanner(os.Stdin).Scan()
 }
