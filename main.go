@@ -4,18 +4,23 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
+	"github.com/google/gopacket/pcapgo"
 )
 
 type IsakmpTrace struct {
 	Timestamp     *time.Time
 	IsSend        bool
-	LocalAddress  *net.IP
-	RemoteAddress *net.IP
+	LocalAddress  net.IP
+	RemoteAddress net.IP
 	Data          []byte
 }
 
@@ -29,6 +34,11 @@ const (
 )
 
 var (
+	local_mac  net.HardwareAddr
+	remote_mac net.HardwareAddr
+)
+
+var (
 	num_reg = regexp.MustCompile(`^\[\d\d?\]$`)
 )
 
@@ -39,7 +49,7 @@ func main() {
 	}
 
 	input_path := os.Args[1]
-	//output_path := input_path + ".pcap"
+	output_path := input_path + ".pcap"
 
 	fp, err := os.Open(input_path)
 	if err != nil {
@@ -115,6 +125,15 @@ func main() {
 		}
 	}
 	fmt.Println(packet_arry)
+	local_mac, _ = net.ParseMAC("00:00:5e:00:53:01")
+	remote_mac, _ = net.ParseMAC("00:00:5e:00:53:02")
+	err = savePcap(output_path, packet_arry)
+	if err != nil {
+		fmt.Println("export error")
+		fmt.Println(err)
+		return
+	}
+
 	fmt.Print("Press Enter to exit. >")
 	bufio.NewScanner(os.Stdin).Scan()
 }
@@ -155,7 +174,7 @@ func parseNumber(line string) (int, bool, *time.Time, error) {
 	return num, send, &time, nil
 }
 
-func parseAddress(line string, local bool) *net.IP {
+func parseAddress(line string, local bool) net.IP {
 	prefix := "Remote Address:("
 	if local {
 		prefix = "Local  Address:("
@@ -165,7 +184,7 @@ func parseAddress(line string, local bool) *net.IP {
 	}
 	s := line[len(prefix) : len(line)-1]
 	ip := net.ParseIP(s)
-	return &ip
+	return ip
 }
 
 func isCookies(line string) bool {
@@ -225,4 +244,85 @@ func parseData(line string, head bool) []byte {
 		}
 	}
 	return data
+}
+
+func savePcap(filepath string, trace_data []IsakmpTrace) error {
+	fp, err := os.Create(filepath)
+	if err != nil {
+		return err
+	}
+	defer fp.Close()
+
+	wr := pcapgo.NewWriter(fp)
+	wr.WriteFileHeader(65535, layers.LinkTypeEthernet)
+
+	for _, v := range trace_data {
+		ci, buf, err := serializeTrace(&v)
+		if err != nil {
+			return err
+		}
+		wr.WritePacket(*ci, buf.Bytes())
+	}
+
+	return nil
+}
+
+func serializeTrace(trace *IsakmpTrace) (*gopacket.CaptureInfo, gopacket.SerializeBuffer, error) {
+	opts := gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true}
+	buf := gopacket.NewSerializeBuffer()
+	ethernet := &layers.Ethernet{}
+	var srcIP net.IP
+	var dstIP net.IP
+	if trace.IsSend {
+		ethernet.SrcMAC = local_mac
+		ethernet.DstMAC = remote_mac
+		srcIP = trace.LocalAddress
+		dstIP = trace.RemoteAddress
+	} else {
+		ethernet.SrcMAC = remote_mac
+		ethernet.DstMAC = local_mac
+		srcIP = trace.RemoteAddress
+		dstIP = trace.LocalAddress
+	}
+
+	udp := &layers.UDP{
+		SrcPort: 500,
+		DstPort: 500,
+	}
+	if a, _ := netip.ParseAddr(trace.LocalAddress.String()); a.Is6() {
+		ethernet.EthernetType = layers.EthernetTypeIPv6
+		ip := &layers.IPv6{
+			Version:    6,
+			HopLimit:   0xff,
+			SrcIP:      srcIP,
+			DstIP:      dstIP,
+			NextHeader: layers.IPProtocolUDP,
+		}
+		udp.SetNetworkLayerForChecksum(ip)
+		err := gopacket.SerializeLayers(buf, opts, ethernet, ip, udp, gopacket.Payload(trace.Data))
+		if err != nil {
+			return nil, nil, err
+		}
+	} else {
+		ethernet.EthernetType = layers.EthernetTypeIPv4
+		ip := &layers.IPv4{
+			Version:  4,
+			TTL:      0xff,
+			Protocol: layers.IPProtocolUDP,
+			SrcIP:    srcIP,
+			DstIP:    dstIP,
+		}
+		udp.SetNetworkLayerForChecksum(ip)
+		err := gopacket.SerializeLayers(buf, opts, ethernet, ip, udp, gopacket.Payload(trace.Data))
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	ci := &gopacket.CaptureInfo{
+		Timestamp:      *trace.Timestamp,
+		CaptureLength:  len(buf.Bytes()),
+		Length:         len(buf.Bytes()),
+		InterfaceIndex: 0,
+	}
+	return ci, buf, nil
 }
