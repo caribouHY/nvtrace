@@ -44,20 +44,43 @@ var (
 
 func main() {
 	if len(os.Args) != 2 {
-		fmt.Println("usage: vntrace filename")
+		fmt.Println("usage: nvtrace filename")
 		return
 	}
 
 	input_path := os.Args[1]
 	output_path := input_path + ".pcap"
 
-	fp, err := os.Open(input_path)
+	packet_arry, err := readTrace(input_path)
 	if err != nil {
+		fmt.Println("import error")
+		fmt.Println(err)
 		return
+	}
+
+	fmt.Println(packet_arry)
+	local_mac, _ = net.ParseMAC("00:00:5e:00:53:01")
+	remote_mac, _ = net.ParseMAC("00:00:5e:00:53:02")
+	err = savePcap(output_path, packet_arry)
+	if err != nil {
+		fmt.Println("export error")
+		fmt.Println(err)
+		return
+	}
+
+	fmt.Print("Press Enter to exit. >")
+	bufio.NewScanner(os.Stdin).Scan()
+}
+
+func readTrace(filepath string) ([]IsakmpTrace, error) {
+	fp, err := os.Open(filepath)
+	if err != nil {
+		return nil, err
 	}
 	defer fp.Close()
 
 	scanner := bufio.NewScanner(fp)
+
 	state := NUMBER
 	var data []byte
 	data_len := 0
@@ -79,11 +102,17 @@ func main() {
 			}
 		case LOCAL:
 			ip := parseAddress(line, true)
+			if ip == nil {
+				return nil, fmt.Errorf("format error: local address is invailed")
+			}
 			fmt.Println(" local =", ip)
 			packet.LocalAddress = ip
 			state++
 		case REMOTE:
 			ip := parseAddress(line, false)
+			if ip == nil {
+				return nil, fmt.Errorf("format error: remote address is invailed")
+			}
 			fmt.Println(" remote =", ip)
 			packet.RemoteAddress = ip
 			state++
@@ -92,14 +121,13 @@ func main() {
 			if res {
 				state++
 			} else {
-				fmt.Println("format error")
-				return
+				return nil, fmt.Errorf("format error: cookie is invailed")
 			}
 		case EXCHANGE:
 			data_len = parseLen(line)
 			if data_len == 0 {
 				fmt.Println("excahge type format error")
-				return
+				return nil, fmt.Errorf("format error: exhange is invailed")
 			} else {
 				fmt.Println(" len =", data_len)
 				data = make([]byte, 0, data_len)
@@ -108,13 +136,11 @@ func main() {
 		case DATA:
 			res := parseData(line, len(data) == 0)
 			if res == nil {
-				fmt.Println("data format error")
-				return
+				return nil, fmt.Errorf("format error: data is invailed")
 			}
 			data = append(data, res...)
 			if len(data) > data_len {
-				fmt.Println("data size format error")
-				return
+				return nil, fmt.Errorf("format error: data is longer than Len:%d", data_len)
 			}
 			if data_len == len(data) {
 				fmt.Println(data)
@@ -124,18 +150,7 @@ func main() {
 			}
 		}
 	}
-	fmt.Println(packet_arry)
-	local_mac, _ = net.ParseMAC("00:00:5e:00:53:01")
-	remote_mac, _ = net.ParseMAC("00:00:5e:00:53:02")
-	err = savePcap(output_path, packet_arry)
-	if err != nil {
-		fmt.Println("export error")
-		fmt.Println(err)
-		return
-	}
-
-	fmt.Print("Press Enter to exit. >")
-	bufio.NewScanner(os.Stdin).Scan()
+	return packet_arry, nil
 }
 
 func parseNumber(line string) (int, bool, *time.Time, error) {
