@@ -2,7 +2,10 @@ package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
+	"io"
+	"log"
 	"net"
 	"net/netip"
 	"os"
@@ -43,33 +46,54 @@ var (
 )
 
 func main() {
-	if len(os.Args) != 2 {
-		fmt.Println("usage: nvtrace filename")
-		return
-	}
+	var (
+		debug       = flag.Bool("d", false, "debug message")
+		output      = flag.String("o", "", "output pcap file")
+		wait        = false
+		output_path string
+	)
+	flag.Parse()
 
-	input_path := os.Args[1]
-	output_path := input_path + ".pcap"
+	if flag.NArg() != 1 {
+		fmt.Printf("Missing filename.")
+		os.Exit(1)
+	}
+	input_path := flag.Arg(0)
+	if *output == "" {
+		wait = true
+		output_path = input_path + ".pcap"
+	} else {
+		output_path = *output
+	}
+	if *debug {
+		log.SetOutput(os.Stdout)
+	} else {
+		log.SetOutput(io.Discard)
+	}
+	log.SetFlags(0)
 
 	packet_arry, err := readTrace(input_path)
 	if err != nil {
-		fmt.Println("import error")
+		fmt.Println("import failed!")
 		fmt.Println(err)
-		return
+		os.Exit(1)
 	}
 
-	fmt.Println(packet_arry)
+	//log.Println(packet_arry)
 	local_mac, _ = net.ParseMAC("00:00:5e:00:53:01")
 	remote_mac, _ = net.ParseMAC("00:00:5e:00:53:02")
 	err = savePcap(output_path, packet_arry)
 	if err != nil {
-		fmt.Println("export error")
+		fmt.Println("export failed!")
 		fmt.Println(err)
-		return
+		os.Exit(1)
 	}
 
-	fmt.Print("Press Enter to exit. >")
-	bufio.NewScanner(os.Stdin).Scan()
+	if wait {
+		fmt.Println("exported to", output_path)
+		fmt.Print("Press Enter to exit. >")
+		bufio.NewScanner(os.Stdin).Scan()
+	}
 }
 
 func readTrace(filepath string) ([]IsakmpTrace, error) {
@@ -96,7 +120,7 @@ func readTrace(filepath string) ([]IsakmpTrace, error) {
 		case NUMBER:
 			num, send, time, err := parseNumber(line)
 			if err == nil {
-				fmt.Printf("num = %d, send=%t, time=%s\n", num, send, time)
+				log.Printf("num = %d, send=%t, time=%s\n", num, send, time)
 				packet = IsakmpTrace{Timestamp: time, IsSend: send}
 				state++
 			}
@@ -105,7 +129,7 @@ func readTrace(filepath string) ([]IsakmpTrace, error) {
 			if ip == nil {
 				return nil, fmt.Errorf("format error: local address is invailed")
 			}
-			fmt.Println(" local =", ip)
+			log.Println("local =", ip)
 			packet.LocalAddress = ip
 			state++
 		case REMOTE:
@@ -113,7 +137,7 @@ func readTrace(filepath string) ([]IsakmpTrace, error) {
 			if ip == nil {
 				return nil, fmt.Errorf("format error: remote address is invailed")
 			}
-			fmt.Println(" remote =", ip)
+			log.Println("remote =", ip)
 			packet.RemoteAddress = ip
 			state++
 		case COOKIES:
@@ -129,7 +153,7 @@ func readTrace(filepath string) ([]IsakmpTrace, error) {
 				fmt.Println("excahge type format error")
 				return nil, fmt.Errorf("format error: exhange is invailed")
 			} else {
-				fmt.Println(" len =", data_len)
+				log.Println("len =", data_len)
 				data = make([]byte, 0, data_len)
 				state++
 			}
@@ -143,7 +167,7 @@ func readTrace(filepath string) ([]IsakmpTrace, error) {
 				return nil, fmt.Errorf("format error: data is longer than Len:%d", data_len)
 			}
 			if data_len == len(data) {
-				fmt.Println(data)
+				log.Println("data =", data)
 				state = NUMBER
 				packet.Data = data
 				packet_arry = append(packet_arry, packet)
