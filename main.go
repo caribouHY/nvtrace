@@ -20,7 +20,7 @@ import (
 )
 
 type IsakmpTrace struct {
-	Timestamp     *time.Time
+	Timestamp     time.Time
 	IsSend        bool
 	LocalAddress  net.IP
 	RemoteAddress net.IP
@@ -177,24 +177,24 @@ func readTrace(filepath string) ([]IsakmpTrace, error) {
 	return packet_arry, nil
 }
 
-func parseNumber(line string) (int, bool, *time.Time, error) {
+func parseNumber(line string) (int, bool, time.Time, error) {
 	line_arr := strings.Fields(line)
 	size := len(line_arr)
 	format_err := fmt.Errorf("format error")
 
 	if size != 7 && size != 8 {
-		return 0, false, nil, format_err
+		return 0, false, time.Time{}, format_err
 	}
 	if line_arr[1] != "ISAKMP" {
-		return 0, false, nil, format_err
+		return 0, false, time.Time{}, format_err
 	}
 	// number
 	if !num_reg.MatchString(line_arr[0]) {
-		return 0, false, nil, format_err
+		return 0, false, time.Time{}, format_err
 	}
 	num, err := strconv.Atoi(line_arr[0][1 : len(line_arr[0])-1])
 	if err != nil {
-		return 0, false, nil, format_err
+		return 0, false, time.Time{}, format_err
 	}
 	// send or recieve
 	var send bool
@@ -203,14 +203,14 @@ func parseNumber(line string) (int, bool, *time.Time, error) {
 	} else if strings.HasPrefix(line_arr[2], "Receive") {
 		send = false
 	} else {
-		return 0, false, nil, format_err
+		return 0, false, time.Time{}, format_err
 	}
 	// time
-	time, err := time.Parse("2 Jan 2006 15:04:05", strings.Join([]string{line_arr[size-3], line_arr[size-4], line_arr[size-1], line_arr[size-2]}, " "))
+	t, err := time.Parse("2 Jan 2006 15:04:05", strings.Join([]string{line_arr[size-3], line_arr[size-4], line_arr[size-1], line_arr[size-2]}, " "))
 	if err != nil {
-		return 0, false, nil, format_err
+		return 0, false, time.Time{}, format_err
 	}
-	return num, send, &time, nil
+	return num, send, t, nil
 }
 
 func parseAddress(line string, local bool) net.IP {
@@ -358,7 +358,7 @@ func serializeTrace(trace *IsakmpTrace) (*gopacket.CaptureInfo, gopacket.Seriali
 		}
 	}
 	ci := &gopacket.CaptureInfo{
-		Timestamp:      *trace.Timestamp,
+		Timestamp:      trace.Timestamp,
 		CaptureLength:  len(buf.Bytes()),
 		Length:         len(buf.Bytes()),
 		InterfaceIndex: 0,
